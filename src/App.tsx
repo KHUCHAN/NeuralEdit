@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import FileUploader from './components/ExcelUploader';
+import ExcelUploader from './components/ExcelUploader';
 import SqlEditor from './components/SqlEditor';
 import DataGrid from './components/DataGrid';
 import SheetSelector from './components/SheetSelector';
+import PromptInput from './components/PromptInput';
+import TableDescription from './components/TableDescription';
 import { initializeDatabase, executeQuery, SqlResult, exportToExcel } from './utils/sqlParser';
+import { generateQueryFromPrompt, saveQueryHistory } from './services/api';
 
 function App() {
   const [sheets, setSheets] = useState<Record<string, any[]>>({});
@@ -15,6 +18,10 @@ function App() {
   const [dbInitialized, setDbInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isGeneratingQuery, setIsGeneratingQuery] = useState(false);
+  const [tableDescription, setTableDescription] = useState('');
+  const [columnDescriptions, setColumnDescriptions] = useState<Record<string, string>>({});
+  const [generatedQuery, setGeneratedQuery] = useState('');
 
   // 데이터베이스 초기화
   useEffect(() => {
@@ -152,13 +159,86 @@ function App() {
     }
   };
 
+  // 테이블/칼럼 설명 변경 처리
+  const handleDescriptionChange = (tableDesc: string, columnDescs: Record<string, string>) => {
+    setTableDescription(tableDesc);
+    setColumnDescriptions(columnDescs);
+  };
+
+  // AI를 통한 쿼리 생성 처리
+  const handlePromptSubmit = async (prompt: string) => {
+    if (!dbInitialized || !activeSheet) {
+      setSqlError('데이터베이스가 초기화되지 않았거나 활성 시트가 없습니다.');
+      return;
+    }
+
+    setIsGeneratingQuery(true);
+    setSqlError(undefined);
+
+    try {
+      // 현재 테이블의 샘플 데이터 준비 (최대 10행)
+      const sampleData = sheets[activeSheet].slice(0, 10);
+      
+      // 칼럼 이름 목록
+      const columns = sampleData.length > 0 ? Object.keys(sampleData[0]) : [];
+      
+      // API 요청 데이터 준비
+      const requestData = {
+        prompt,
+        tableName: activeSheet,
+        columns,
+        tableDescription,
+        columnDescriptions,
+        sampleData
+      };
+      
+      // Flask 서버에 쿼리 생성 요청
+      const response = await generateQueryFromPrompt(requestData);
+      
+      if (response.error) {
+        setSqlError(`쿼리 생성 오류: ${response.error}`);
+        return;
+      }
+      
+      if (!response.query) {
+        setSqlError('생성된 쿼리가 없습니다.');
+        return;
+      }
+      
+      // 생성된 쿼리 표시
+      setGeneratedQuery(response.query);
+      
+      // 생성된 쿼리 실행
+      handleExecuteQuery(response.query);
+      
+      // 쿼리 이력 저장 (선택적)
+      if (sqlResult && sqlResult.success) {
+        saveQueryHistory(prompt, response.query, sqlResult.data);
+      }
+      
+    } catch (error) {
+      console.error('Query generation error:', error);
+      setSqlError(error instanceof Error ? error.message : '쿼리 생성 중 오류가 발생했습니다');
+    } finally {
+      setIsGeneratingQuery(false);
+    }
+  };
+
+  // 활성 시트의 칼럼 목록 가져오기 
+  const getActiveSheetColumns = (): string[] => {
+    if (!activeSheet || !sheets[activeSheet] || sheets[activeSheet].length === 0) {
+      return [];
+    }
+    return Object.keys(sheets[activeSheet][0]);
+  };
+
   return (
     <div className="min-h-screen bg-gray-100">
       <div className="container mx-auto px-4 py-8">
         <header className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Excel SQL Viewer</h1>
           <p className="mt-2 text-gray-600">
-            엑셀, CSV, DAT 파일을 업로드하고 SQL로 데이터를 조회 및 편집하세요
+            엑셀 파일을 업로드하고 SQL로 데이터를 조회 및 편집하세요
           </p>
         </header>
 
@@ -172,25 +252,43 @@ function App() {
           <div className="lg:col-span-1 space-y-6">
             <div className="bg-white rounded-lg shadow p-4">
               <h2 className="text-xl font-semibold mb-4">파일 업로드</h2>
-              <FileUploader onSheetsLoaded={handleSheetsLoaded} />
+              <ExcelUploader onSheetsLoaded={handleSheetsLoaded} />
             </div>
 
             {Object.keys(sheets).length > 0 && (
-              <div>
-                <h2 className="text-xl font-semibold mb-4">SQL 쿼리</h2>
-                <SqlEditor 
-                  onExecuteQuery={handleExecuteQuery}
-                  isProcessing={isProcessing}
-                  error={sqlError}
-                  availableTables={Object.keys(sheets)}
-                />
-              </div>
+              <>
+                <div>
+                  <h2 className="text-xl font-semibold mb-4">SQL 쿼리</h2>
+                  <SqlEditor 
+                    onExecuteQuery={handleExecuteQuery}
+                    isProcessing={isProcessing}
+                    error={sqlError}
+                    availableTables={Object.keys(sheets)}
+                    initialQuery={generatedQuery}
+                  />
+                </div>
+
+                <div>
+                  <PromptInput 
+                    onPromptSubmit={handlePromptSubmit}
+                    isLoading={isGeneratingQuery}
+                  />
+                </div>
+              </>
             )}
           </div>
 
           <div className="lg:col-span-2">
             {Object.keys(sheets).length > 0 && (
               <div>
+                {activeSheet && (
+                  <TableDescription 
+                    tableName={activeSheet}
+                    columns={getActiveSheetColumns()}
+                    onDescriptionChange={handleDescriptionChange}
+                  />
+                )}
+                
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-xl font-semibold">데이터</h2>
                   <div className="flex space-x-2">

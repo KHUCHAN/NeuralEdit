@@ -5,6 +5,7 @@ interface Props {
   isProcessing: boolean;
   error?: string;
   availableTables: string[];
+  initialQuery?: string;
 }
 
 // SQL 키워드 목록 (하이라이팅용)
@@ -16,11 +17,18 @@ const SQL_KEYWORDS = [
   'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'DISTINCT'
 ];
 
-const SqlEditor = ({ onExecuteQuery, isProcessing, error, availableTables }: Props) => {
-  const [query, setQuery] = useState('');
+const SqlEditor = ({ onExecuteQuery, isProcessing, error, availableTables, initialQuery = '' }: Props) => {
+  const [query, setQuery] = useState(initialQuery);
   const [highlightedQuery, setHighlightedQuery] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
+  
+  // initialQuery가 변경되면 query 상태 업데이트
+  useEffect(() => {
+    if (initialQuery && initialQuery !== query) {
+      setQuery(initialQuery);
+    }
+  }, [initialQuery]);
   
   // SQL 구문 하이라이팅
   useEffect(() => {

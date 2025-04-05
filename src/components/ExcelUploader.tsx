@@ -5,7 +5,7 @@ interface Props {
   onSheetsLoaded: (sheets: Record<string, any[]>) => void;
 }
 
-const FileUploader = ({ onSheetsLoaded }: Props) => {
+const ExcelUploader = ({ onSheetsLoaded }: Props) => {
   const [isLoading, setIsLoading] = useState(false);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -17,9 +17,6 @@ const FileUploader = ({ onSheetsLoaded }: Props) => {
     setIsLoading(true);
     setFileName(file.name);
     setError(null);
-
-    const fileExtension = file.name.split('.').pop()?.toLowerCase();
-    console.log('File extension:', fileExtension);
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -34,100 +31,32 @@ const FileUploader = ({ onSheetsLoaded }: Props) => {
           ? data 
           : new Uint8Array(String(data).split('').map(c => c.charCodeAt(0))).buffer;
         
-        let sheets: Record<string, any[]> = {};
+        const workbook = XLSX.read(arrayBuffer, { type: 'buffer' });
         
-        // 파일 확장자에 따라 다르게 처리
-        if (fileExtension === 'csv') {
-          // CSV 파일 처리
-          const options = { type: 'binary', FS: ',', raw: true };
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-          
-          // CSV는 시트가 하나만 있음
-          if (workbook.SheetNames.length > 0) {
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-            
-            // 헤더 행을 기반으로 JSON 배열로 변환
-            if (jsonData.length > 1) {
-              const headers = jsonData[0] as string[];
-              const rows = jsonData.slice(1);
-              const formattedData = rows.map(row => {
-                const obj: Record<string, any> = {};
-                headers.forEach((header, i) => {
-                  obj[header] = (row as any[])[i];
-                });
-                return obj;
-              });
-              
-              sheets['CSV_Data'] = formattedData;
-            } else {
-              sheets['CSV_Data'] = jsonData as any[];
-            }
-          }
-        } else if (fileExtension === 'dat') {
-          // DAT 파일 처리 - 일반적으로 탭이나 공백으로 구분된 텍스트 파일
-          // 텍스트로 읽고 파싱
-          const text = new TextDecoder().decode(arrayBuffer instanceof ArrayBuffer ? arrayBuffer : new Uint8Array(arrayBuffer));
-          const lines = text.split('\n').filter(line => line.trim().length > 0);
-          
-          if (lines.length > 0) {
-            // 구분자 자동 감지 (탭, 콤마, 파이프, 세미콜론 중 가장 많이 사용된 것)
-            const firstLine = lines[0];
-            const delimiters = ['\t', ',', '|', ';'];
-            let bestDelimiter = '\t'; // 기본 구분자는 탭
-            let maxCount = 0;
-            
-            for (const delimiter of delimiters) {
-              const count = (firstLine.match(new RegExp(delimiter, 'g')) || []).length;
-              if (count > maxCount) {
-                maxCount = count;
-                bestDelimiter = delimiter;
-              }
-            }
-            
-            // 헤더를 첫 번째 줄로 가정
-            const headers = lines[0].split(bestDelimiter).map(h => h.trim());
-            const rows = lines.slice(1).map(line => {
-              const values = line.split(bestDelimiter).map(v => v.trim());
-              const obj: Record<string, any> = {};
-              headers.forEach((header, i) => {
-                // 숫자로 변환 가능한 경우 숫자로 변환
-                const value = values[i];
-                obj[header] = !isNaN(Number(value)) ? Number(value) : value;
-              });
-              return obj;
-            });
-            
-            sheets['DAT_Data'] = rows;
-          }
-        } else {
-          // 엑셀 파일 처리 (기존 코드)
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-          
-          if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
-            throw new Error('파일에 시트가 없습니다.');
-          }
-          
-          // 모든 시트 처리
-          workbook.SheetNames.forEach(sheetName => {
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet);
-            
-            // 빈 데이터 확인
-            if (jsonData.length === 0) {
-              console.warn(`시트 '${sheetName}'에 데이터가 없습니다.`);
-              // 빈 배열로 저장해도 괜찮음
-            }
-            
-            sheets[sheetName] = jsonData;
-          });
+        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+          throw new Error('엑셀 파일에 시트가 없습니다.');
         }
+
+        const sheets: Record<string, any[]> = {};
         
-        console.log('Parsed data:', Object.keys(sheets));
+        // 모든 시트 처리
+        workbook.SheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+          
+          // 빈 데이터 확인
+          if (jsonData.length === 0) {
+            console.warn(`시트 '${sheetName}'에 데이터가 없습니다.`);
+            // 빈 배열로 저장해도 괜찮음
+          }
+          
+          sheets[sheetName] = jsonData;
+        });
+        
+        console.log('Parsed sheets:', Object.keys(sheets));
         onSheetsLoaded(sheets);
       } catch (error) {
-        console.error('File parsing error:', error);
+        console.error('Excel parsing error:', error);
         setError(error instanceof Error ? error.message : '파일 파싱 중 오류가 발생했습니다.');
       } finally {
         setIsLoading(false);
@@ -139,12 +68,7 @@ const FileUploader = ({ onSheetsLoaded }: Props) => {
       setIsLoading(false);
     };
     
-    // 파일 형식에 따라 읽는 방식 선택
-    if (fileExtension === 'csv' || fileExtension === 'dat') {
-      reader.readAsArrayBuffer(file);
-    } else {
-      reader.readAsArrayBuffer(file);
-    }
+    reader.readAsArrayBuffer(file);
   };
 
   return (
@@ -162,7 +86,7 @@ const FileUploader = ({ onSheetsLoaded }: Props) => {
                 <p className="mb-1 text-sm text-gray-500">
                   <span className="font-semibold">클릭하여 업로드</span> 또는 파일을 여기로 끌어오세요
                 </p>
-                <p className="text-xs text-gray-500">.xlsx, .xls, .csv, .dat 형식 지원</p>
+                <p className="text-xs text-gray-500">.xlsx, .xls 형식 지원</p>
               </>
             )}
           </div>
@@ -170,7 +94,7 @@ const FileUploader = ({ onSheetsLoaded }: Props) => {
             id="file-upload" 
             type="file"
             name="file-upload"
-            accept=".xlsx,.xls,.csv,.dat"
+            accept=".xlsx,.xls"
             className="hidden"
             onChange={handleFileUpload}
             disabled={isLoading}
@@ -191,4 +115,4 @@ const FileUploader = ({ onSheetsLoaded }: Props) => {
   );
 };
 
-export default FileUploader; 
+export default ExcelUploader; 
